@@ -1,0 +1,71 @@
+#include "imports/stdlib.fc";
+
+;
+; Jetton Wallet - محفظة العملة
+; Jetton Wallet Smart Contract
+;
+
+(slice, slice, int, cell) load_data() inline {
+    var ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(),  ;; owner
+        ds~load_msg_addr(),  ;; jetton_minter
+        ds~load_coins(),     ;; balance
+        ds~load_ref()        ;; jetton_wallet_code
+    );
+}
+
+save_data(slice owner, slice jetton_minter, int balance, cell jetton_wallet_code) impure inline {
+    set_data(begin_cell()
+        .store_slice(owner)
+        .store_slice(jetton_minter)
+        .store_coins(balance)
+        .store_ref(jetton_wallet_code)
+        .end_cell());
+}
+
+() recv_internal(int balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    
+    if (flags & 1) {
+        return ();
+    }
+
+    slice sender = cs~load_msg_addr();
+    int op = in_msg_body~load_uint(32);
+    int query_id = in_msg_body~load_uint(64);
+
+    var (owner, jetton_minter, wallet_balance, jetton_wallet_code) = load_data();
+
+    if (op == op::transfer()) {
+        int jetton_amount = in_msg_body~load_coins();
+        slice to_address = in_msg_body~load_msg_addr();
+
+        throw_unless(401, equal_slices(sender, owner));
+        throw_unless(402, wallet_balance >= jetton_amount);
+
+        wallet_balance -= jetton_amount;
+        save_data(owner, jetton_minter, wallet_balance, jetton_wallet_code);
+
+        send_raw_message(begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(to_address)
+            .store_coins(msg_value)
+            .store_uint(0, 107)
+            .end_cell(), 64);
+
+        return ();
+    }
+
+    throw(0xffff);
+}
+
+int get_wallet_data() method_id {
+    var (owner, jetton_minter, wallet_balance, _) = load_data();
+    return (wallet_balance, owner, jetton_minter);
+}
